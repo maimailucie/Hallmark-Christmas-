@@ -1,64 +1,174 @@
-const API="https://api.themoviedb.org/3";
-const IMG="https://image.tmdb.org/t/p/w500";
-const CORS={"Access-Control-Allow-Origin":"*","Access-Control-Allow-Methods":"GET, OPTIONS","Access-Control-Allow-Headers":"*","Content-Type":"application/json; charset=utf-8"};
-const manifest={id:"community.hallmark.christmas.movies",version:"1.4.0",name:"Hallmark Christmas Movies",description:"Danh mục phim Giáng Sinh Hallmark; metadata từ TMDB.",resources:["catalog","meta"],types:["movie"],idPrefixes:["tt","tmdb:"],catalogs:[{type:"movie",id:"hallmark_christmas_latest",name:"🎄 Hallmark Christmas • Tất cả",extra:[{name:"skip","isRequired":false}]}]};
-const json=(d,s=200,h={})=>new Response(JSON.stringify(d),{status:s,headers:{...CORS,...h}});
-async function tmdb(path,key,params={}){const u=new URL(API+path);u.searchParams.set("api_key",key);u.searchParams.set("language","vi-VN");for(const [k,v] of Object.entries(params))u.searchParams.set(k,String(v));const r=await fetch(u);if(!r.ok)throw Error("TMDB HTTP "+r.status);return r.json();}
-function toMeta(m,ids={}){return {id:ids.imdb_id||"tmdb:"+m.id,type:"movie",name:m.title||m.original_title,poster:m.poster_path?IMG+m.poster_path:undefined,background:m.backdrop_path?"https://image.tmdb.org/t/p/w1280"+m.backdrop_path:undefined,description:m.overview||"",releaseInfo:(m.release_date||"").slice(0,4),imdbRating:m.vote_average?m.vote_average.toFixed(1):undefined,genres:m.genres?.map(g=>g.name)};}
-function clean(s){return s.replace(/<script[\s\S]*?<\/script>/gi," ").replace(/<style[\s\S]*?<\/style>/gi," ").replace(/<[^>]+>/g," ").replace(/&amp;/g,"&").replace(/&#39;|&apos;/g,"'").replace(/&quot;/g,'"').replace(/&nbsp;/g," ").replace(/\s+/g," ").trim();}
-function norm(s){return String(s||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/&amp;/g,"&").replace(/[^a-z0-9]+/g," ").trim().replace(/\s+/g," ");}
-function slugTitle(slug){return decodeURIComponent(slug||"").replace(/[-_]+/g," ").replace(/\b\w/g,c=>c.toUpperCase()).trim();}
-function extractMovies(html){
-  const found=new Map();
-  // XmasDB detail links are stable movie records: /movie/<xmasdb-id>/<slug>/
-  const re=/<a\b[^>]*href=["'](?:https?:\/\/www\.xmasdb\.com)?\/movie\/\d+\/([^"'/?#]+)\/?[^>]*>([\s\S]*?)<\/a>/gi;
-  let m;
-  while((m=re.exec(html))!==null){
-    const slug=m[1]; const inner=clean(m[2]);
-    const title=inner.length>2&&inner.length<120?inner:slugTitle(slug);
-    const around=html.slice(Math.max(0,m.index-1200),Math.min(html.length,re.lastIndex+1800));
-    const yearMatch=around.match(/(?:Release Date|Christmas|\b)(19\d{2}|20\d{2})\b/i);
-    if(!yearMatch)continue;
-    const year=yearMatch[1];
-    if(/^(hallmark|christmas movies|coming soon|xmasdb)$/i.test(title))continue;
-    found.set(norm(title)+"|"+year,[title,year]);
+const API = "https://api.themoviedb.org/3";
+const IMG = "https://image.tmdb.org/t/p/w500";
+const BG = "https://image.tmdb.org/t/p/w1280";
+const CORS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, OPTIONS",
+  "Access-Control-Allow-Headers": "*",
+  "Content-Type": "application/json; charset=utf-8"
+};
+
+const manifest = {
+  id: "community.hallmark.christmas.movies",
+  version: "2.0.0",
+  name: "Hallmark Christmas Movies",
+  description: "Phim Giáng Sinh Hallmark được tìm trực tiếp từ TMDB.",
+  resources: ["catalog", "meta"],
+  types: ["movie"],
+  idPrefixes: ["tt", "tmdb:"],
+  catalogs: [{
+    type: "movie",
+    id: "hallmark_christmas_latest",
+    name: "🎄 Hallmark Christmas • Mới nhất",
+    extra: [{ name: "skip", isRequired: false }]
+  }]
+};
+
+const json = (data, status = 200, extra = {}) =>
+  new Response(JSON.stringify(data), { status, headers: { ...CORS, ...extra } });
+
+async function tmdb(path, key, params = {}) {
+  const url = new URL(API + path);
+  url.searchParams.set("api_key", key);
+  url.searchParams.set("language", "en-US");
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null && v !== "") url.searchParams.set(k, String(v));
   }
-  // Fallback for cards where anchor text is empty but the slug and year are present.
-  if(!found.size){
-    const r=/<a\b[^>]*href=["'](?:https?:\/\/www\.xmasdb\.com)?\/movie\/\d+\/([^"'/?#]+)\/?[^>]*>/gi;
-    while((m=r.exec(html))!==null){const around=html.slice(Math.max(0,m.index-900),Math.min(html.length,m.index+1600));const y=around.match(/\b(19\d{2}|20\d{2})\b/);if(y){const t=slugTitle(m[1]);found.set(norm(t)+"|"+y[1],[t,y[1]]);}}
+  const response = await fetch(url, { headers: { Accept: "application/json" } });
+  if (!response.ok) throw new Error(`TMDB ${response.status} at ${path}`);
+  return response.json();
+}
+
+const norm = value => String(value || "")
+  .toLowerCase()
+  .normalize("NFD")
+  .replace(/[\u0300-\u036f]/g, "")
+  .replace(/[^a-z0-9]+/g, " ")
+  .trim();
+
+function isChristmasMovie(movie) {
+  const text = norm(`${movie.title || ""} ${movie.original_title || ""} ${movie.overview || ""}`);
+  const keywords = (movie.keywords?.keywords || movie.keywords?.results || []).map(x => norm(x.name));
+  const holidaySignal = /\bchristmas\b|\bxmas\b|\byuletide\b|\bholiday\b/.test(text) ||
+    keywords.some(k => /christmas|xmas|holiday/.test(k));
+  const companies = (movie.production_companies || []).map(c => norm(c.name));
+  const hallmarkCompany = companies.some(c => c.includes("hallmark") || c.includes("crown media"));
+  return holidaySignal && hallmarkCompany;
+}
+
+function toMeta(movie) {
+  const ids = movie.external_ids || {};
+  return {
+    id: ids.imdb_id || `tmdb:${movie.id}`,
+    type: "movie",
+    name: movie.title || movie.original_title,
+    poster: movie.poster_path ? IMG + movie.poster_path : undefined,
+    background: movie.backdrop_path ? BG + movie.backdrop_path : undefined,
+    description: movie.overview || "",
+    releaseInfo: (movie.release_date || "").slice(0, 4),
+    imdbRating: movie.vote_average ? Number(movie.vote_average).toFixed(1) : undefined,
+    genres: (movie.genres || []).map(g => g.name)
+  };
+}
+
+async function discoverHallmark(key) {
+  // Resolve Hallmark-related production companies dynamically; no external catalog is used.
+  const companySearches = await Promise.all([
+    tmdb("/search/company", key, { query: "Hallmark" }),
+    tmdb("/search/company", key, { query: "Crown Media" })
+  ]);
+  const companyMap = new Map();
+  for (const result of companySearches) {
+    for (const company of result.results || []) {
+      const name = norm(company.name);
+      if ((name.includes("hallmark") || name.includes("crown media")) && (!company.origin_country || company.origin_country === "US")) {
+        companyMap.set(company.id, company);
+      }
+    }
   }
-  return [...found.values()];
+
+  const jobs = [];
+  for (const company of companyMap.values()) {
+    jobs.push(tmdb("/discover/movie", key, {
+      with_companies: company.id,
+      sort_by: "primary_release_date.desc",
+      include_adult: false,
+      page: 1
+    }));
+    jobs.push(tmdb("/discover/movie", key, {
+      with_companies: company.id,
+      sort_by: "primary_release_date.desc",
+      include_adult: false,
+      page: 2
+    }));
+  }
+  // Search results supplement discover because some Hallmark titles are tagged inconsistently.
+  for (const query of ["Hallmark Christmas", "Hallmark Christmas movie", "Hallmark holiday movie"]) {
+    jobs.push(tmdb("/search/movie", key, { query, include_adult: false, page: 1 }));
+  }
+  const responses = await Promise.all(jobs);
+  const candidates = new Map();
+  for (const response of responses) {
+    for (const item of response.results || []) {
+      if (item.id) candidates.set(item.id, item);
+    }
+  }
+
+  const ids = [...candidates.keys()];
+  const detailed = [];
+  for (let i = 0; i < ids.length; i += 6) {
+    const batch = await Promise.all(ids.slice(i, i + 6).map(id =>
+      tmdb(`/movie/${id}`, key, { append_to_response: "keywords,external_ids" }).catch(() => null)
+    ));
+    for (const movie of batch) if (movie && isChristmasMovie(movie)) detailed.push(toMeta(movie));
+  }
+  const unique = new Map(detailed.map(m => [m.id, m]));
+  return [...unique.values()].sort((a, b) =>
+    (b.releaseInfo || "").localeCompare(a.releaseInfo || "") || a.name.localeCompare(b.name)
+  );
 }
-async function sourceTitles(){const all=new Map();const candidates=[n=>`https://www.xmasdb.com/hallmark/${n===1?"":"?page="+n}`,n=>`https://xmasdb.com/hallmark/${n===1?"":"?page="+n}`,n=>`https://www.xmasdb.com/hallmark/page/${n}/`];
- for(let page=1;page<=17;page++){let html="";for(const make of candidates){try{const r=await fetch(make(page),{headers:{"User-Agent":"Mozilla/5.0 (compatible; HallmarkCatalog/1.0)",Accept:"text/html"}});if(r.ok){const x=await r.text();if(x.includes("Hallmark")&&x.length>1000){html=x;break;}}}catch{}}
-  if(!html)continue;for(const item of extractMovies(html))all.set(item[0].toLowerCase()+"|"+item[1],item);
- }
- return [...all.values()];}
-function similarity(a,b){
- const A=norm(a),B=norm(b); if(!A||!B)return 0; if(A===B)return 1;
- const ta=new Set(A.split(" ")),tb=new Set(B.split(" ")); const inter=[...ta].filter(x=>tb.has(x)).length;
- const dice=2*inter/(ta.size+tb.size); const contain=A.includes(B)||B.includes(A)?0.92:0;
- return Math.max(dice,contain);
+
+async function getMeta(id, key) {
+  let tmdbId = id;
+  if (id.startsWith("tmdb:")) tmdbId = id.slice(5);
+  else if (/^tt\d+$/.test(id)) {
+    const found = await tmdb(`/find/${id}`, key, { external_source: "imdb_id" });
+    tmdbId = found.movie_results?.[0]?.id;
+    if (!tmdbId) return null;
+  } else return null;
+  const movie = await tmdb(`/movie/${tmdbId}`, key, { append_to_response: "keywords,external_ids" });
+  return toMeta(movie);
 }
-async function lookup(title,year,key){
- const queries=[title, title.replace(/[:'’!?-]/g," ").replace(/\s+/g," ").trim()];
- let candidates=[];
- for(const q of [...new Set(queries)]){
-   const r=await tmdb("/search/movie",key,{query:q,include_adult:false});
-   candidates.push(...(r.results||[]));
-   if(candidates.some(x=>similarity(title,x.title||x.original_title)>=0.98))break;
- }
- const uniq=[...new Map(candidates.map(x=>[x.id,x])).values()];
- const ranked=uniq.map(x=>({x,sim:Math.max(similarity(title,x.title),similarity(title,x.original_title)),yearDiff:Math.abs(Number((x.release_date||"0000").slice(0,4))-Number(year))}));
- ranked.sort((a,b)=>(b.sim-a.sim)||(a.yearDiff-b.yearDiff)||((b.x.vote_count||0)-(a.x.vote_count||0)));
- const best=ranked[0];
- // Avoid false positives: accept exact/near-exact title only; prefer matching year but allow one-year metadata drift.
- if(!best||best.sim<0.86||best.yearDiff>1)return null;
- const d=await tmdb("/movie/"+best.x.id,key,{append_to_response:"external_ids"});
- return toMeta(d,d.external_ids||{});
-}
-async function catalog(key,skip){const titles=await sourceTitles();const out=[];for(let i=0;i<titles.length;i+=8){const batch=await Promise.all(titles.slice(i,i+8).map(([t,y])=>lookup(t,y,key).catch(()=>null)));out.push(...batch.filter(Boolean));}
- out.sort((a,b)=>(b.releaseInfo||"").localeCompare(a.releaseInfo||"")||a.name.localeCompare(b.name));return {metas:out.slice(skip,skip+100),sourceCount:titles.length,matchedCount:out.length,unmatchedCount:Math.max(0,titles.length-out.length)};}
-async function getMeta(id,key){if(id.startsWith("tmdb:")){const d=await tmdb("/movie/"+id.slice(5),key,{append_to_response:"external_ids"});return toMeta(d,d.external_ids||{});}if(/^tt\d+$/.test(id)){const f=await tmdb("/find/"+id,key,{external_source:"imdb_id"});const m=f.movie_results?.[0];if(!m)return null;const d=await tmdb("/movie/"+m.id,key,{append_to_response:"external_ids"});return toMeta(d,d.external_ids||{imdb_id:id});}return null;}
-export default {async fetch(req,env){const u=new URL(req.url);if(req.method==="OPTIONS")return new Response(null,{status:204,headers:CORS});if(u.pathname==="/")return new Response("Hallmark Christmas addon v1.4.0 running",{headers:{...CORS,"Content-Type":"text/plain"}});if(u.pathname==="/manifest.json")return json(manifest);if(!env.TMDB_API_KEY)return json({error:"Thiếu Secret TMDB_API_KEY"},500);const c=u.pathname.match(/^\/catalog\/movie\/hallmark_christmas_latest(?:\/(.*))?\.json$/);if(c){try{const data=await catalog(env.TMDB_API_KEY,Number(u.searchParams.get("skip")||0));return json(data,200,{"Cache-Control":"public, max-age=1800"});}catch(e){return json({metas:[],error:String(e.message||e)},502);}}const m=u.pathname.match(/^\/meta\/movie\/([^/]+)\.json$/);if(m){try{const x=await getMeta(decodeURIComponent(m[1]),env.TMDB_API_KEY);return x?json({meta:x}):json({meta:null},404);}catch(e){return json({error:String(e.message||e)},502);}}return json({error:"Not found"},404);}};
+
+export default {
+  async fetch(request, env) {
+    const url = new URL(request.url);
+    if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
+    if (url.pathname === "/") return new Response("Hallmark Christmas addon v2.0.0 running", { headers: { ...CORS, "Content-Type": "text/plain" } });
+    if (url.pathname === "/manifest.json") return json(manifest);
+    if (!env.TMDB_API_KEY) return json({ error: "Thiếu Secret TMDB_API_KEY" }, 500);
+
+    if (/^\/catalog\/movie\/hallmark_christmas_latest(?:\/.*)?\.json$/.test(url.pathname)) {
+      try {
+        const metas = await discoverHallmark(env.TMDB_API_KEY);
+        const skip = Math.max(0, Number(url.searchParams.get("skip") || 0));
+        return json({ metas: metas.slice(skip, skip + 100), source: "TMDB direct", matchedCount: metas.length }, 200, {
+          "Cache-Control": "public, max-age=1800"
+        });
+      } catch (error) {
+        return json({ metas: [], error: String(error.message || error), source: "TMDB direct" }, 502);
+      }
+    }
+
+    const metaMatch = url.pathname.match(/^\/meta\/movie\/([^/]+)\.json$/);
+    if (metaMatch) {
+      try {
+        const meta = await getMeta(decodeURIComponent(metaMatch[1]), env.TMDB_API_KEY);
+        return meta ? json({ meta }) : json({ meta: null }, 404);
+      } catch (error) {
+        return json({ error: String(error.message || error) }, 502);
+      }
+    }
+    return json({ error: "Not found" }, 404);
+  }
+};

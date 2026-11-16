@@ -1,5 +1,12 @@
-Hallmark Christmas Worker v1.4.0
+# Hallmark Christmas Movies addon v2.0.0
 
-Replace the existing worker.js in the GitHub repository with this file and commit. Keep the Cloudflare secret TMDB_API_KEY unchanged.
+This version searches TMDB directly. It no longer fetches XmasDB.
 
-This version improves XmasDB card extraction and TMDB matching. It has been syntax-checked with Node.js, but live XmasDB pagination and TMDB matching have not been verified from this build environment. Check the catalog JSON fields sourceCount, matchedCount and unmatchedCount after deployment.
+## Cloudflare
+- Keep the existing Worker name and `TMDB_API_KEY` Secret.
+- Replace the deployed Worker code with `worker.js`.
+- Deploy the Worker.
+- Keep using `https://YOUR-WORKER.workers.dev/manifest.json` in Nuvio.
+
+## Important limitation
+TMDB is a community metadata database and does not provide a guaranteed complete Hallmark Christmas collection. This addon dynamically searches Hallmark/Crown Media production-company records and supplements them with TMDB movie search. It filters candidates by Christmas/holiday signals and Hallmark/Crown Media production company credits. The resulting count depends on TMDB's current metadata coverage.
